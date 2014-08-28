@@ -191,7 +191,7 @@ document.webL10n = (function(window, document, undefined) {
     }
 
     // parse *.properties text data into an l10n dictionary
-    function parseProperties(text) {
+    function parseProperties(text, parsePropertiesCallback) {
       var dictionary = [];
 
       // token expressions
@@ -200,6 +200,8 @@ document.webL10n = (function(window, document, undefined) {
       var reSection = /^\s*\[(.*)\]\s*$/;
       var reImport = /^\s*@import\s+url\((.*)\)\s*$/i;
       var reSplit = /^([^=\s]*)\s*=\s*(.+)$/; // TODO: escape EOLs with '\'
+
+      var urlsToLoad = [];
 
       // parse the *.properties file into an associative array
       function parseRawLines(rawText, extendedSyntax) {
@@ -229,7 +231,8 @@ document.webL10n = (function(window, document, undefined) {
             }
             if (reImport.test(line)) { // @import rule?
               match = reImport.exec(line);
-              loadImport(baseURL + match[1]); // load the resource synchronously
+              urlsToLoad.push(baseURL + match[1]);
+              //loadImport(baseURL + match[1]); // load the resource synchronously
             }
           }
 
@@ -239,47 +242,56 @@ document.webL10n = (function(window, document, undefined) {
             dictionary[tmp[1]] = evalString(tmp[2]);
           }
         }
+
+        if (urlsToLoad.length > 0) {
+          var urlToLoad = urlsToLoad.pop();
+          loadImport(urlToLoad);
+        } else {
+          parsePropertiesCallback(dictionary);
+        }
       }
 
       // import another *.properties file
       function loadImport(url) {
         xhrLoadText(url, function(content) {
           parseRawLines(content, false); // don't allow recursive imports
-        }, null, false); // load synchronously
+        }, null, gAsyncResourceLoading); // load synchronously
       }
 
       // fill the dictionary
       parseRawLines(text, true);
-      return dictionary;
     }
 
     // load and parse l10n data (warning: global variables are used here)
     xhrLoadText(href, function(response) {
       gTextData += response; // mostly for debug
 
+      var parsePropertiesCallback = function(data) {
+        // find attribute descriptions, if any
+        for (var key in data) {
+          var id, prop, index = key.lastIndexOf('.');
+          if (index > 0) { // an attribute has been specified
+            id = key.substring(0, index);
+            prop = key.substr(index + 1);
+          } else { // no attribute: assuming text content by default
+            id = key;
+            prop = gTextProp;
+          }
+          if (!gL10nData[id]) {
+            gL10nData[id] = {};
+          }
+          gL10nData[id][prop] = data[key];
+        }
+
+        // trigger callback
+        if (successCallback) {
+          successCallback();
+        }
+      };
+
       // parse *.properties text data into an l10n dictionary
-      var data = parseProperties(response);
+      parseProperties(response, parsePropertiesCallback);
 
-      // find attribute descriptions, if any
-      for (var key in data) {
-        var id, prop, index = key.lastIndexOf('.');
-        if (index > 0) { // an attribute has been specified
-          id = key.substring(0, index);
-          prop = key.substr(index + 1);
-        } else { // no attribute: assuming text content by default
-          id = key;
-          prop = gTextProp;
-        }
-        if (!gL10nData[id]) {
-          gL10nData[id] = {};
-        }
-        gL10nData[id][prop] = data[key];
-      }
-
-      // trigger callback
-      if (successCallback) {
-        successCallback();
-      }
     }, failureCallback, gAsyncResourceLoading);
   };
 
